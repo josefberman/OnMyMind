@@ -46,8 +46,8 @@ type Props = {
 }
 
 type ActiveDrag =
-  | { type: 'list'; listId: string }
-  | { type: 'item'; listId: string; itemId: string }
+  | { type: 'list'; listId: string; name: string; color: ColorKey; preview: string[] }
+  | { type: 'item'; listId: string; itemId: string; text: string; done: boolean }
   | null
 
 export default function Board({
@@ -80,30 +80,50 @@ export default function Board({
   )
 
   const listIds = useMemo(() => lists.map((l) => listSortableId(l.id)), [lists])
-  const activeList =
-    active?.type === 'list' ? lists.find((l) => l.id === active.listId) : null
-  const activeItem =
-    active?.type === 'item'
-      ? (itemsByList[active.listId] ?? []).find((i) => i.id === active.itemId)
-      : null
 
   const itemsFor = (listId: string) =>
     itemOrderOverride?.[listId] ?? itemsByList[listId] ?? []
 
   const onDragStart = (event: DragStartEvent) => {
-    const type = event.active.data.current?.type
-    if (type === 'list') {
-      const listId = parseListSortableId(String(event.active.id))
-      if (listId) setActive({ type: 'list', listId })
+    const id = String(event.active.id)
+    const listIdFromId = parseListSortableId(id)
+    const itemIdFromId = parseItemSortableId(id)
+
+    if (listIdFromId || event.active.data.current?.type === 'list') {
+      const listId =
+        listIdFromId ?? (event.active.data.current?.listId as string | undefined)
+      const list = lists.find((l) => l.id === listId)
+      if (!list) return
+      const preview = (itemsByList[list.id] ?? [])
+        .filter((i) => !i.done)
+        .sort((a, b) => a.order - b.order)
+        .slice(0, 4)
+        .map((i) => i.text)
+      setActive({
+        type: 'list',
+        listId: list.id,
+        name: list.name,
+        color: list.color,
+        preview,
+      })
       return
     }
-    if (type === 'item') {
-      const itemId = parseItemSortableId(String(event.active.id))
+
+    if (itemIdFromId || event.active.data.current?.type === 'item') {
+      const itemId =
+        itemIdFromId ?? (event.active.data.current?.itemId as string | undefined)
       const listId = event.active.data.current?.listId as string | undefined
-      if (itemId && listId) {
-        setActive({ type: 'item', listId, itemId })
-        setItemOrderOverride({ ...itemsByList })
-      }
+      if (!itemId || !listId) return
+      const item = (itemsByList[listId] ?? []).find((i) => i.id === itemId)
+      if (!item) return
+      setActive({
+        type: 'item',
+        listId,
+        itemId,
+        text: item.text,
+        done: item.done,
+      })
+      setItemOrderOverride({ ...itemsByList })
     }
   }
 
@@ -213,6 +233,7 @@ export default function Board({
                 key={list.id}
                 list={list}
                 items={itemsFor(list.id)}
+                isDragSource={active?.type === 'list' && active.listId === list.id}
                 onRename={(name) => onRenameList(list.id, name)}
                 onColor={(color) => onColorList(list.id, color)}
                 onDelete={() => onDeleteList(list.id)}
@@ -232,37 +253,40 @@ export default function Board({
           />
         </div>
 
-        <DragOverlay dropAnimation={null}>
-          {activeList ? (
-            <div
-              className="list-column is-dragging"
-              style={{ width: 320, pointerEvents: 'none' }}
-            >
+        <DragOverlay dropAnimation={null} style={{ zIndex: 1000 }}>
+          {active?.type === 'list' ? (
+            <div className="list-column-ghost">
               <div
                 className="list-header"
-                style={{ background: COLORS[activeList.color] }}
+                style={{ background: COLORS[active.color] }}
               >
                 <span className="list-title" style={{ cursor: 'grabbing' }}>
-                  {activeList.name}
+                  {active.name}
                 </span>
               </div>
-              <div className="list-body" style={{ minHeight: 60 }} />
+              <div className="list-body">
+                {active.preview.length === 0 ? (
+                  <div className="item-row" style={{ color: 'var(--muted)' }}>
+                    Empty list
+                  </div>
+                ) : (
+                  active.preview.map((text, i) => (
+                    <div key={`${i}-${text}`} className="item-row">
+                      <span className="item-text">{text}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           ) : null}
-          {activeItem ? (
+          {active?.type === 'item' ? (
             <div
-              className={`item-row is-dragging${activeItem.done ? ' is-done' : ''}`}
-              style={{
-                width: 280,
-                pointerEvents: 'none',
-                background: 'white',
-                boxShadow: '0 10px 30px rgba(31,41,80,0.16)',
-              }}
+              className={`item-row item-row-ghost${active.done ? ' is-done' : ''}`}
             >
               <span className="drag-handle" aria-hidden>
                 ⠿
               </span>
-              <span className="item-text">{activeItem.text}</span>
+              <span className="item-text">{active.text}</span>
             </div>
           ) : null}
         </DragOverlay>
@@ -274,6 +298,7 @@ export default function Board({
 function SortableListColumn({
   list,
   items,
+  isDragSource,
   onRename,
   onColor,
   onDelete,
@@ -283,6 +308,7 @@ function SortableListColumn({
 }: {
   list: TodoList
   items: TodoItem[]
+  isDragSource: boolean
   onRename: (name: string) => void
   onColor: (color: ColorKey) => void
   onDelete: () => void
@@ -305,7 +331,6 @@ function SortableListColumn({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.35 : 1,
   }
 
   return (
@@ -314,7 +339,7 @@ function SortableListColumn({
       items={items}
       setNodeRef={setNodeRef}
       style={style}
-      isDragging={isDragging}
+      isDragging={isDragging || isDragSource}
       dragHandleProps={{ attributes, listeners }}
       onRename={onRename}
       onColor={onColor}

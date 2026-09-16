@@ -362,10 +362,31 @@ button {
   touch-action: pan-y;
 }
 
-.list-column.is-dragging {
+.list-column.is-dragging-source {
+  opacity: 0;
+}
+
+.list-column-ghost {
+  width: var(--col-width);
+  background: var(--surface);
+  border-radius: var(--radius);
   box-shadow: var(--shadow-lift);
-  transform: scale(1.02);
-  z-index: 10;
+  cursor: grabbing;
+  pointer-events: none;
+}
+
+.list-column-ghost .list-body {
+  min-height: 72px;
+  max-height: 200px;
+  overflow: hidden;
+}
+
+.item-row-ghost {
+  width: 280px;
+  background: white;
+  box-shadow: var(--shadow-lift);
+  pointer-events: none;
+  cursor: grabbing;
 }
 
 .list-header {
@@ -723,9 +744,5 @@ button {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
-  }
-
-  .list-column.is-dragging {
-    transform: none;
   }
 }

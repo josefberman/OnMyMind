@@ -97,7 +97,7 @@ export default function ListColumn({
   return (
     <article
       ref={setNodeRef}
-      className={`list-column${isDragging ? ' is-dragging' : ''}`}
+      className={`list-column${isDragging ? ' is-dragging-source' : ''}`}
       style={{ ...style, ['--focus' as string]: COLORS[list.color] }}
     >
       <div
