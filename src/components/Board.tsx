@@ -3,12 +3,14 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  TouchSensor,
   KeyboardSensor,
-  closestCenter,
+  closestCorners,
   useSensor,
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
+  type DragOverEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -18,7 +20,11 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import ListColumn from './ListColumn'
+import ListColumn, {
+  listSortableId,
+  parseItemSortableId,
+  parseListSortableId,
+} from './ListColumn'
 import NewListGhost from './NewListGhost'
 import { COLORS, type ColorKey, type TodoItem, type TodoList } from '../types'
 
@@ -39,6 +45,11 @@ type Props = {
   onReorderItems: (listId: string, orderedIds: string[]) => void
 }
 
+type ActiveDrag =
+  | { type: 'list'; listId: string }
+  | { type: 'item'; listId: string; itemId: string }
+  | null
+
 export default function Board({
   lists,
   itemsByList,
@@ -55,29 +66,120 @@ export default function Board({
   onDeleteItem,
   onReorderItems,
 }: Props) {
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [active, setActive] = useState<ActiveDrag>(null)
+  // Local item order while dragging so the UI moves immediately
+  const [itemOrderOverride, setItemOrderOverride] = useState<Record<
+    string,
+    TodoItem[]
+  > | null>(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  const ids = useMemo(() => lists.map((l) => l.id), [lists])
-  const activeList = lists.find((l) => l.id === activeId) ?? null
+  const listIds = useMemo(() => lists.map((l) => listSortableId(l.id)), [lists])
+  const activeList =
+    active?.type === 'list' ? lists.find((l) => l.id === active.listId) : null
+  const activeItem =
+    active?.type === 'item'
+      ? (itemsByList[active.listId] ?? []).find((i) => i.id === active.itemId)
+      : null
+
+  const itemsFor = (listId: string) =>
+    itemOrderOverride?.[listId] ?? itemsByList[listId] ?? []
 
   const onDragStart = (event: DragStartEvent) => {
-    setActiveId(String(event.active.id))
+    const type = event.active.data.current?.type
+    if (type === 'list') {
+      const listId = parseListSortableId(String(event.active.id))
+      if (listId) setActive({ type: 'list', listId })
+      return
+    }
+    if (type === 'item') {
+      const itemId = parseItemSortableId(String(event.active.id))
+      const listId = event.active.data.current?.listId as string | undefined
+      if (itemId && listId) {
+        setActive({ type: 'item', listId, itemId })
+        setItemOrderOverride({ ...itemsByList })
+      }
+    }
+  }
+
+  const onDragOver = (event: DragOverEvent) => {
+    const { active: a, over } = event
+    if (!over || a.data.current?.type !== 'item') return
+
+    const activeItemId = parseItemSortableId(String(a.id))
+    const overItemId = parseItemSortableId(String(over.id))
+    if (!activeItemId || !overItemId || activeItemId === overItemId) return
+
+    const listId = a.data.current.listId as string
+    const zone = a.data.current.zone as 'open' | 'done'
+    const overZone = over.data.current?.zone as 'open' | 'done' | undefined
+    if (over.data.current?.type !== 'item' || overZone !== zone) return
+    if (over.data.current.listId !== listId) return
+
+    setItemOrderOverride((prev) => {
+      const source = prev ?? itemsByList
+      const items = [...(source[listId] ?? [])]
+      const zoneItems = items
+        .filter((i) => (zone === 'done' ? i.done : !i.done))
+        .sort((x, y) => x.order - y.order)
+      const rest = items.filter((i) => (zone === 'done' ? !i.done : i.done))
+
+      const oldIndex = zoneItems.findIndex((i) => i.id === activeItemId)
+      const newIndex = zoneItems.findIndex((i) => i.id === overItemId)
+      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return prev
+
+      const reordered = arrayMove(zoneItems, oldIndex, newIndex).map(
+        (item, index) => ({ ...item, order: index }),
+      )
+      const merged =
+        zone === 'open' ? [...reordered, ...rest] : [...rest, ...reordered]
+      return { ...source, [listId]: merged }
+    })
   }
 
   const onDragEnd = (event: DragEndEvent) => {
-    setActiveId(null)
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIndex = ids.indexOf(String(active.id))
-    const newIndex = ids.indexOf(String(over.id))
-    if (oldIndex < 0 || newIndex < 0) return
-    const next = arrayMove(ids, oldIndex, newIndex)
-    onReorderLists(next)
+    const { active: a, over } = event
+    const dragType = a.data.current?.type
+    setActive(null)
+
+    if (dragType === 'list') {
+      if (!over) return
+      const activeListId = parseListSortableId(String(a.id))
+      const overListId =
+        parseListSortableId(String(over.id)) ??
+        (over.data.current?.listId as string | undefined)
+      if (!activeListId || !overListId || activeListId === overListId) return
+      const ids = lists.map((l) => l.id)
+      const oldIndex = ids.indexOf(activeListId)
+      const newIndex = ids.indexOf(overListId)
+      if (oldIndex < 0 || newIndex < 0) return
+      onReorderLists(arrayMove(ids, oldIndex, newIndex))
+      return
+    }
+
+    if (dragType === 'item') {
+      const listId = a.data.current?.listId as string
+      const zone = a.data.current?.zone as 'open' | 'done'
+      const override = itemOrderOverride?.[listId]
+      setItemOrderOverride(null)
+      if (!override) return
+
+      const orderedIds = override
+        .filter((i) => (zone === 'done' ? i.done : !i.done))
+        .sort((x, y) => x.order - y.order)
+        .map((i) => i.id)
+      onReorderItems(listId, orderedIds)
+    }
+  }
+
+  const onDragCancel = () => {
+    setActive(null)
+    setItemOrderOverride(null)
   }
 
   if (lists.length === 0 && !ghostOpen) {
@@ -98,27 +200,25 @@ export default function Board({
     <div className="board-area">
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={closestCorners}
         onDragStart={onDragStart}
+        onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={onDragCancel}
       >
-        <div className={`board${activeId ? ' is-dragging' : ''}`}>
-          <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
+        <div className={`board${active ? ' is-dragging' : ''}`}>
+          <SortableContext items={listIds} strategy={horizontalListSortingStrategy}>
             {lists.map((list) => (
               <SortableListColumn
                 key={list.id}
                 list={list}
-                items={itemsByList[list.id] ?? []}
+                items={itemsFor(list.id)}
                 onRename={(name) => onRenameList(list.id, name)}
                 onColor={(color) => onColorList(list.id, color)}
                 onDelete={() => onDeleteList(list.id)}
                 onAddItem={(text) => onAddItem(list.id, text)}
                 onToggleItem={(item) => onToggleItem(list.id, item)}
                 onDeleteItem={(itemId) => onDeleteItem(list.id, itemId)}
-                onReorderItems={(orderedIds) =>
-                  onReorderItems(list.id, orderedIds)
-                }
               />
             ))}
           </SortableContext>
@@ -149,6 +249,22 @@ export default function Board({
               <div className="list-body" style={{ minHeight: 60 }} />
             </div>
           ) : null}
+          {activeItem ? (
+            <div
+              className={`item-row is-dragging${activeItem.done ? ' is-done' : ''}`}
+              style={{
+                width: 280,
+                pointerEvents: 'none',
+                background: 'white',
+                boxShadow: '0 10px 30px rgba(31,41,80,0.16)',
+              }}
+            >
+              <span className="drag-handle" aria-hidden>
+                ⠿
+              </span>
+              <span className="item-text">{activeItem.text}</span>
+            </div>
+          ) : null}
         </DragOverlay>
       </DndContext>
     </div>
@@ -164,7 +280,6 @@ function SortableListColumn({
   onAddItem,
   onToggleItem,
   onDeleteItem,
-  onReorderItems,
 }: {
   list: TodoList
   items: TodoItem[]
@@ -174,7 +289,6 @@ function SortableListColumn({
   onAddItem: (text: string) => void
   onToggleItem: (item: TodoItem) => void
   onDeleteItem: (itemId: string) => void
-  onReorderItems: (orderedIds: string[]) => void
 }) {
   const {
     attributes,
@@ -183,7 +297,10 @@ function SortableListColumn({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: list.id })
+  } = useSortable({
+    id: listSortableId(list.id),
+    data: { type: 'list' as const, listId: list.id },
+  })
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -205,7 +322,6 @@ function SortableListColumn({
       onAddItem={onAddItem}
       onToggleItem={onToggleItem}
       onDeleteItem={onDeleteItem}
-      onReorderItems={onReorderItems}
     />
   )
 }

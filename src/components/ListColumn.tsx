@@ -1,20 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-  sortableKeyboardCoordinates,
-  arrayMove,
-} from '@dnd-kit/sortable'
+import { useSortable } from '@dnd-kit/sortable'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
   COLOR_KEYS,
@@ -23,6 +9,22 @@ import {
   type TodoItem,
   type TodoList,
 } from '../types'
+
+export function itemSortableId(itemId: string) {
+  return `item:${itemId}`
+}
+
+export function parseItemSortableId(id: string): string | null {
+  return id.startsWith('item:') ? id.slice(5) : null
+}
+
+export function listSortableId(listId: string) {
+  return `list:${listId}`
+}
+
+export function parseListSortableId(id: string): string | null {
+  return id.startsWith('list:') ? id.slice(5) : null
+}
 
 type Props = {
   list: TodoList
@@ -38,7 +40,6 @@ type Props = {
   onAddItem: (text: string) => void
   onToggleItem: (item: TodoItem) => void
   onDeleteItem: (itemId: string) => void
-  onReorderItems: (orderedIds: string[]) => void
   style?: React.CSSProperties
   setNodeRef?: (node: HTMLElement | null) => void
 }
@@ -54,7 +55,6 @@ export default function ListColumn({
   onAddItem,
   onToggleItem,
   onDeleteItem,
-  onReorderItems,
   style,
   setNodeRef,
 }: Props) {
@@ -88,26 +88,10 @@ export default function ListColumn({
     [items],
   )
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-
   const commitTitle = () => {
     const next = title.trim() || 'Untitled'
     setTitle(next)
     if (next !== list.name) onRename(next)
-  }
-
-  const handleItemDragEnd = (event: DragEndEvent, zone: 'open' | 'done') => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const zoneItems = zone === 'open' ? openItems : doneItems
-    const oldIndex = zoneItems.findIndex((i) => i.id === active.id)
-    const newIndex = zoneItems.findIndex((i) => i.id === over.id)
-    if (oldIndex < 0 || newIndex < 0) return
-    const reordered = arrayMove(zoneItems, oldIndex, newIndex)
-    onReorderItems(reordered.map((i) => i.id))
   }
 
   return (
@@ -199,46 +183,38 @@ export default function ListColumn({
       </div>
 
       <div className="list-body">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={(e) => handleItemDragEnd(e, 'open')}
+        <SortableContext
+          items={openItems.map((i) => itemSortableId(i.id))}
+          strategy={verticalListSortingStrategy}
         >
+          {openItems.map((item) => (
+            <SortableItem
+              key={item.id}
+              item={item}
+              listId={list.id}
+              zone="open"
+              onToggle={() => onToggleItem(item)}
+              onDelete={() => onDeleteItem(item.id)}
+            />
+          ))}
+        </SortableContext>
+
+        {doneItems.length > 0 && (
           <SortableContext
-            items={openItems.map((i) => i.id)}
+            items={doneItems.map((i) => itemSortableId(i.id))}
             strategy={verticalListSortingStrategy}
           >
-            {openItems.map((item) => (
+            {doneItems.map((item) => (
               <SortableItem
                 key={item.id}
                 item={item}
+                listId={list.id}
+                zone="done"
                 onToggle={() => onToggleItem(item)}
                 onDelete={() => onDeleteItem(item.id)}
               />
             ))}
           </SortableContext>
-        </DndContext>
-
-        {doneItems.length > 0 && (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={(e) => handleItemDragEnd(e, 'done')}
-          >
-            <SortableContext
-              items={doneItems.map((i) => i.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {doneItems.map((item) => (
-                <SortableItem
-                  key={item.id}
-                  item={item}
-                  onToggle={() => onToggleItem(item)}
-                  onDelete={() => onDeleteItem(item.id)}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
         )}
       </div>
 
@@ -267,15 +243,22 @@ export default function ListColumn({
 
 function SortableItem({
   item,
+  listId,
+  zone,
   onToggle,
   onDelete,
 }: {
   item: TodoItem
+  listId: string
+  zone: 'open' | 'done'
   onToggle: () => void
   onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: item.id })
+    useSortable({
+      id: itemSortableId(item.id),
+      data: { type: 'item' as const, listId, itemId: item.id, zone },
+    })
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
