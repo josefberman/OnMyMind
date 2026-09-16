@@ -13,7 +13,7 @@ import {
   renameList,
   updateListColor,
   deleteList,
-  reorderLists,
+  moveList,
   addItem,
   toggleItem,
   deleteItem,
@@ -134,7 +134,9 @@ export default function App() {
           updateListColor(user.uid, listId, color)
         }
         onDeleteList={(listId) => deleteList(user.uid, listId)}
-        onReorderLists={(orderedIds) => reorderLists(user.uid, orderedIds)}
+        onMoveList={(listId, col, row) =>
+          moveList(user.uid, listId, col, row, lists)
+        }
         onAddItem={(listId, text) => {
           const open = (itemsByList[listId] ?? []).filter((i) => !i.done)
           return addItem(user.uid, listId, text, open)

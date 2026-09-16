@@ -30,8 +30,9 @@ type Props = {
   list: TodoList
   items: TodoItem[]
   dragHandleProps: {
-    attributes: ReturnType<typeof useSortable>['attributes']
-    listeners: ReturnType<typeof useSortable>['listeners']
+    // from useDraggable / useSortable — keep loose for either source
+    attributes: object
+    listeners?: object
   }
   isDragging: boolean
   onRename: (name: string) => void

@@ -12,7 +12,14 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { requireDb } from './firebase'
-import { nextColor, type ColorKey, type TodoItem, type TodoList } from './types'
+import {
+  findNextCell,
+  nextColor,
+  cellKey,
+  type ColorKey,
+  type TodoItem,
+  type TodoList,
+} from './types'
 
 function listsRef(uid: string) {
   return collection(requireDb(), 'users', uid, 'lists')
@@ -20,6 +27,43 @@ function listsRef(uid: string) {
 
 function itemsRef(uid: string, listId: string) {
   return collection(requireDb(), 'users', uid, 'lists', listId, 'items')
+}
+
+function mapList(id: string, data: Record<string, unknown>): TodoList {
+  const order = typeof data.order === 'number' ? data.order : 0
+  const hasCol = typeof data.col === 'number'
+  const hasRow = typeof data.row === 'number'
+  return {
+    id,
+    name: (data.name as string) || 'Untitled',
+    color: data.color as ColorKey,
+    order,
+    col: hasCol ? (data.col as number) : order,
+    row: hasRow ? (data.row as number) : 0,
+    createdAt: (data.createdAt as number) || 0,
+    updatedAt: (data.updatedAt as number) || 0,
+  }
+}
+
+/** Ensure every list has a unique col/row (deployed site may only update `order`). */
+function normalizeLayout(lists: TodoList[]): TodoList[] {
+  const sorted = [...lists].sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+  const occupied = new Set<string>()
+  return sorted.map((list) => {
+    let { col, row } = list
+    if (occupied.has(cellKey(col, row))) {
+      const next = findNextCell(
+        [...occupied].map((key) => {
+          const [c, r] = key.split(',').map(Number)
+          return { col: c, row: r }
+        }),
+      )
+      col = next.col
+      row = next.row
+    }
+    occupied.add(cellKey(col, row))
+    return col === list.col && row === list.row ? list : { ...list, col, row }
+  })
 }
 
 export function subscribeLists(
@@ -31,18 +75,30 @@ export function subscribeLists(
   return onSnapshot(
     q,
     (snap) => {
-      const lists: TodoList[] = snap.docs.map((d) => {
-        const data = d.data()
-        return {
-          id: d.id,
-          name: data.name as string,
-          color: data.color as ColorKey,
-          order: data.order as number,
-          createdAt: data.createdAt as number,
-          updatedAt: data.updatedAt as number,
-        }
+      const mapped = snap.docs.map((d) => mapList(d.id, d.data()))
+      const normalized = normalizeLayout(mapped)
+      onData(normalized)
+
+      // Persist missing/colliding grid coords so local and deployed stay aligned
+      const dirty = normalized.filter((list) => {
+        const raw = mapped.find((m) => m.id === list.id)
+        return !raw || raw.col !== list.col || raw.row !== list.row
       })
-      onData(lists)
+      if (dirty.length > 0) {
+        const firestore = requireDb()
+        const batch = writeBatch(firestore)
+        const now = Date.now()
+        dirty.forEach((list) => {
+          batch.update(doc(firestore, 'users', uid, 'lists', list.id), {
+            col: list.col,
+            row: list.row,
+            updatedAt: now,
+          })
+        })
+        void batch.commit().catch(() => {
+          /* non-fatal; UI already has normalized positions */
+        })
+      }
     },
     (err) => onError?.(err),
   )
@@ -85,10 +141,13 @@ export async function createList(
     existing.length === 0
       ? 0
       : Math.max(...existing.map((l) => l.order)) + 1
+  const { col, row } = findNextCell(existing)
   const ref = await addDoc(listsRef(uid), {
     name: name.trim() || 'Untitled',
     color: color || nextColor(existing.map((l) => l.color)),
     order,
+    col,
+    row,
     createdAt: now,
     updatedAt: now,
   })
@@ -122,15 +181,38 @@ export async function deleteList(uid: string, listId: string) {
   await batch.commit()
 }
 
-export async function reorderLists(uid: string, orderedIds: string[]) {
+/** Move a list to a grid cell; if occupied, swap with the other list. */
+export async function moveList(
+  uid: string,
+  listId: string,
+  col: number,
+  row: number,
+  lists: TodoList[],
+) {
   const firestore = requireDb()
+  const moving = lists.find((l) => l.id === listId)
+  if (!moving) return
+  const nextCol = Math.max(0, col)
+  const nextRow = Math.max(0, row)
+  if (moving.col === nextCol && moving.row === nextRow) return
+
+  const occupant = lists.find(
+    (l) => l.id !== listId && l.col === nextCol && l.row === nextRow,
+  )
   const batch = writeBatch(firestore)
-  orderedIds.forEach((id, index) => {
-    batch.update(doc(firestore, 'users', uid, 'lists', id), {
-      order: index,
-      updatedAt: Date.now(),
-    })
+  const now = Date.now()
+  batch.update(doc(firestore, 'users', uid, 'lists', listId), {
+    col: nextCol,
+    row: nextRow,
+    updatedAt: now,
   })
+  if (occupant) {
+    batch.update(doc(firestore, 'users', uid, 'lists', occupant.id), {
+      col: moving.col,
+      row: moving.row,
+      updatedAt: now,
+    })
+  }
   await batch.commit()
 }
 

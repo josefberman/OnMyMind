@@ -8,14 +8,13 @@ import {
   closestCorners,
   useSensor,
   useSensors,
+  useDraggable,
   type DragEndEvent,
   type DragStartEvent,
   type DragOverEvent,
+  type DragMoveEvent,
 } from '@dnd-kit/core'
 import {
-  SortableContext,
-  horizontalListSortingStrategy,
-  useSortable,
   sortableKeyboardCoordinates,
   arrayMove,
 } from '@dnd-kit/sortable'
@@ -26,7 +25,16 @@ import ListColumn, {
   parseListSortableId,
 } from './ListColumn'
 import NewListGhost from './NewListGhost'
-import { COLORS, type ColorKey, type TodoItem, type TodoList } from '../types'
+import {
+  COLORS,
+  GRID_CELL_H,
+  GRID_CELL_W,
+  cellKey,
+  findNextCell,
+  type ColorKey,
+  type TodoItem,
+  type TodoList,
+} from '../types'
 
 type Props = {
   lists: TodoList[]
@@ -38,7 +46,7 @@ type Props = {
   onRenameList: (listId: string, name: string) => void
   onColorList: (listId: string, color: ColorKey) => void
   onDeleteList: (listId: string) => void
-  onReorderLists: (orderedIds: string[]) => void
+  onMoveList: (listId: string, col: number, row: number) => void
   onAddItem: (listId: string, text: string) => void
   onToggleItem: (listId: string, item: TodoItem) => void
   onDeleteItem: (listId: string, itemId: string) => void
@@ -46,9 +54,21 @@ type Props = {
 }
 
 type ActiveDrag =
-  | { type: 'list'; listId: string; name: string; color: ColorKey; preview: string[] }
+  | {
+      type: 'list'
+      listId: string
+      name: string
+      color: ColorKey
+      preview: string[]
+      col: number
+      row: number
+    }
   | { type: 'item'; listId: string; itemId: string; text: string; done: boolean }
   | null
+
+function snapCoord(origin: number, delta: number, cell: number) {
+  return Math.max(0, Math.round(origin + delta / cell))
+}
 
 export default function Board({
   lists,
@@ -60,14 +80,16 @@ export default function Board({
   onRenameList,
   onColorList,
   onDeleteList,
-  onReorderLists,
+  onMoveList,
   onAddItem,
   onToggleItem,
   onDeleteItem,
   onReorderItems,
 }: Props) {
   const [active, setActive] = useState<ActiveDrag>(null)
-  // Local item order while dragging so the UI moves immediately
+  const [snapHint, setSnapHint] = useState<{ col: number; row: number } | null>(
+    null,
+  )
   const [itemOrderOverride, setItemOrderOverride] = useState<Record<
     string,
     TodoItem[]
@@ -79,10 +101,27 @@ export default function Board({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  const listIds = useMemo(() => lists.map((l) => listSortableId(l.id)), [lists])
-
   const itemsFor = (listId: string) =>
     itemOrderOverride?.[listId] ?? itemsByList[listId] ?? []
+
+  const layoutExtent = useMemo(() => {
+    const positions = [...lists]
+    if (active?.type === 'list' && snapHint) {
+      positions.push({
+        id: '__hint',
+        col: snapHint.col,
+        row: snapHint.row,
+      } as TodoList)
+    }
+    const ghostCell = findNextCell(lists)
+    const maxCol = Math.max(2, ...positions.map((l) => l.col), ghostCell.col) + 1
+    const maxRow = Math.max(1, ...positions.map((l) => l.row), ghostCell.row) + 1
+    return {
+      width: maxCol * GRID_CELL_W + 40,
+      height: maxRow * GRID_CELL_H + 40,
+      ghostCell,
+    }
+  }, [lists, active, snapHint])
 
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id)
@@ -105,7 +144,10 @@ export default function Board({
         name: list.name,
         color: list.color,
         preview,
+        col: list.col,
+        row: list.row,
       })
+      setSnapHint({ col: list.col, row: list.row })
       return
     }
 
@@ -125,6 +167,17 @@ export default function Board({
       })
       setItemOrderOverride({ ...itemsByList })
     }
+  }
+
+  const onDragMove = (event: DragMoveEvent) => {
+    if (event.active.data.current?.type !== 'list') return
+    const listId = parseListSortableId(String(event.active.id))
+    const list = lists.find((l) => l.id === listId)
+    if (!list) return
+    setSnapHint({
+      col: snapCoord(list.col, event.delta.x, GRID_CELL_W),
+      row: snapCoord(list.row, event.delta.y, GRID_CELL_H),
+    })
   }
 
   const onDragOver = (event: DragOverEvent) => {
@@ -163,22 +216,19 @@ export default function Board({
   }
 
   const onDragEnd = (event: DragEndEvent) => {
-    const { active: a, over } = event
+    const { active: a } = event
     const dragType = a.data.current?.type
+    const delta = event.delta
     setActive(null)
+    setSnapHint(null)
 
     if (dragType === 'list') {
-      if (!over) return
-      const activeListId = parseListSortableId(String(a.id))
-      const overListId =
-        parseListSortableId(String(over.id)) ??
-        (over.data.current?.listId as string | undefined)
-      if (!activeListId || !overListId || activeListId === overListId) return
-      const ids = lists.map((l) => l.id)
-      const oldIndex = ids.indexOf(activeListId)
-      const newIndex = ids.indexOf(overListId)
-      if (oldIndex < 0 || newIndex < 0) return
-      onReorderLists(arrayMove(ids, oldIndex, newIndex))
+      const listId = parseListSortableId(String(a.id))
+      const list = lists.find((l) => l.id === listId)
+      if (!list) return
+      const col = snapCoord(list.col, delta.x, GRID_CELL_W)
+      const row = snapCoord(list.row, delta.y, GRID_CELL_H)
+      onMoveList(list.id, col, row)
       return
     }
 
@@ -199,6 +249,7 @@ export default function Board({
 
   const onDragCancel = () => {
     setActive(null)
+    setSnapHint(null)
     setItemOrderOverride(null)
   }
 
@@ -216,42 +267,76 @@ export default function Board({
     )
   }
 
+  const occupied = useMemo(
+    () => new Set(lists.map((l) => cellKey(l.col, l.row))),
+    [lists],
+  )
+
   return (
     <div className="board-area">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
         onDragStart={onDragStart}
+        onDragMove={onDragMove}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDragCancel={onDragCancel}
       >
-        <div className={`board${active ? ' is-dragging' : ''}`}>
-          <SortableContext items={listIds} strategy={horizontalListSortingStrategy}>
-            {lists.map((list) => (
-              <SortableListColumn
-                key={list.id}
-                list={list}
-                items={itemsFor(list.id)}
-                isDragSource={active?.type === 'list' && active.listId === list.id}
-                onRename={(name) => onRenameList(list.id, name)}
-                onColor={(color) => onColorList(list.id, color)}
-                onDelete={() => onDeleteList(list.id)}
-                onAddItem={(text) => onAddItem(list.id, text)}
-                onToggleItem={(item) => onToggleItem(list.id, item)}
-                onDeleteItem={(itemId) => onDeleteItem(list.id, itemId)}
-              />
-            ))}
-          </SortableContext>
+        <div
+          className={`board board-grid${active?.type === 'list' ? ' is-dragging-list' : ''}${active ? ' is-dragging' : ''}`}
+          style={{
+            width: layoutExtent.width,
+            minHeight: layoutExtent.height,
+          }}
+        >
+          {active?.type === 'list' && snapHint && (
+            <div
+              className="grid-snap-hint"
+              style={{
+                left: snapHint.col * GRID_CELL_W,
+                top: snapHint.row * GRID_CELL_H,
+              }}
+              aria-hidden
+            />
+          )}
 
-          <NewListGhost
-            lists={lists}
-            open={ghostOpen}
-            onOpen={onGhostOpen}
-            onClose={onGhostClose}
-            onCreate={onCreateList}
-          />
+          {lists.map((list) => (
+            <DraggableListColumn
+              key={list.id}
+              list={list}
+              items={itemsFor(list.id)}
+              isDragSource={active?.type === 'list' && active.listId === list.id}
+              onRename={(name) => onRenameList(list.id, name)}
+              onColor={(color) => onColorList(list.id, color)}
+              onDelete={() => onDeleteList(list.id)}
+              onAddItem={(text) => onAddItem(list.id, text)}
+              onToggleItem={(item) => onToggleItem(list.id, item)}
+              onDeleteItem={(itemId) => onDeleteItem(list.id, itemId)}
+            />
+          ))}
+
+          <div
+            className="ghost-slot"
+            style={{
+              left: layoutExtent.ghostCell.col * GRID_CELL_W,
+              top: layoutExtent.ghostCell.row * GRID_CELL_H,
+            }}
+          >
+            <NewListGhost
+              lists={lists}
+              open={ghostOpen}
+              onOpen={onGhostOpen}
+              onClose={onGhostClose}
+              onCreate={onCreateList}
+            />
+          </div>
         </div>
+
+        {/* silence unused in render trees that reference occupied during hint */}
+        <span className="sr-only" aria-hidden>
+          {occupied.size}
+        </span>
 
         <DragOverlay dropAnimation={null} style={{ zIndex: 1000 }}>
           {active?.type === 'list' ? (
@@ -295,7 +380,7 @@ export default function Board({
   )
 }
 
-function SortableListColumn({
+function DraggableListColumn({
   list,
   items,
   isDragSource,
@@ -316,37 +401,36 @@ function SortableListColumn({
   onToggleItem: (item: TodoItem) => void
   onDeleteItem: (itemId: string) => void
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: listSortableId(list.id),
-    data: { type: 'list' as const, listId: list.id },
-  })
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: listSortableId(list.id),
+      data: { type: 'list' as const, listId: list.id },
+    })
 
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    position: 'absolute',
+    left: list.col * GRID_CELL_W,
+    top: list.row * GRID_CELL_H,
+    width: 'var(--col-width)',
+    transform: CSS.Translate.toString(transform),
+    zIndex: isDragging || isDragSource ? 5 : 1,
   }
 
+  // Item SortableContexts live inside ListColumn; list uses useDraggable only.
   return (
-    <ListColumn
-      list={list}
-      items={items}
-      setNodeRef={setNodeRef}
-      style={style}
-      isDragging={isDragging || isDragSource}
-      dragHandleProps={{ attributes, listeners }}
-      onRename={onRename}
-      onColor={onColor}
-      onDelete={onDelete}
-      onAddItem={onAddItem}
-      onToggleItem={onToggleItem}
-      onDeleteItem={onDeleteItem}
-    />
+    <div ref={setNodeRef} style={style} className="list-slot">
+      <ListColumn
+        list={list}
+        items={items}
+        isDragging={isDragging || isDragSource}
+        dragHandleProps={{ attributes, listeners }}
+        onRename={onRename}
+        onColor={onColor}
+        onDelete={onDelete}
+        onAddItem={onAddItem}
+        onToggleItem={onToggleItem}
+        onDeleteItem={onDeleteItem}
+      />
+    </div>
   )
 }
