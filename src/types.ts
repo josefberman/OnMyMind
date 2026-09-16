@@ -18,11 +18,20 @@ export function nextColor(used: ColorKey[]): ColorKey {
   return COLOR_KEYS[used.length % COLOR_KEYS.length]
 }
 
+/** Pixel size of one board grid cell (list + gap). */
+export const GRID_CELL_W = 340
+export const GRID_CELL_H = 440
+/** Preferred wrap width when auto-placing new lists. */
+export const GRID_WRAP_COLS = 3
+
 export type TodoList = {
   id: string
   name: string
   color: ColorKey
+  /** @deprecated kept for migration; layout uses col/row */
   order: number
+  col: number
+  row: number
   createdAt: number
   updatedAt: number
 }
@@ -33,4 +42,21 @@ export type TodoItem = {
   done: boolean
   order: number
   createdAt: number
+}
+
+export function cellKey(col: number, row: number) {
+  return `${col},${row}`
+}
+
+export function findNextCell(
+  lists: Pick<TodoList, 'col' | 'row'>[],
+  wrapCols = GRID_WRAP_COLS,
+): { col: number; row: number } {
+  const occupied = new Set(lists.map((l) => cellKey(l.col, l.row)))
+  for (let i = 0; i < 10_000; i++) {
+    const col = i % wrapCols
+    const row = Math.floor(i / wrapCols)
+    if (!occupied.has(cellKey(col, row))) return { col, row }
+  }
+  return { col: 0, row: lists.length }
 }

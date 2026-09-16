@@ -303,6 +303,7 @@ button {
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow: auto;
 }
 
 .board {
@@ -316,12 +317,55 @@ button {
   scroll-behavior: smooth;
 }
 
+.board.board-grid {
+  display: block;
+  position: relative;
+  flex: 0 0 auto;
+  overflow: visible;
+  scroll-snap-type: none;
+  background-image:
+    linear-gradient(to right, rgba(31, 41, 80, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(31, 41, 80, 0.04) 1px, transparent 1px);
+  background-size: 340px 440px;
+  background-position: 20px 24px;
+}
+
+.board.board-grid.is-dragging-list {
+  background-image:
+    linear-gradient(to right, rgba(59, 130, 246, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(59, 130, 246, 0.12) 1px, transparent 1px);
+}
+
+.list-slot,
+.ghost-slot {
+  position: absolute;
+  width: var(--col-width);
+  padding: 0;
+}
+
+.ghost-slot .ghost-column {
+  width: 100%;
+  min-height: 200px;
+  max-height: 400px;
+}
+
+.grid-snap-hint {
+  position: absolute;
+  width: var(--col-width);
+  height: 400px;
+  border-radius: var(--radius);
+  border: 2px dashed #93c5fd;
+  background: rgba(59, 130, 246, 0.08);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .board.is-dragging {
   scroll-snap-type: none;
   scroll-behavior: auto;
 }
 
-.board:not(.is-dragging) {
+.board:not(.is-dragging):not(.board-grid) {
   scroll-snap-type: x mandatory;
 }
 
@@ -357,8 +401,7 @@ button {
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - var(--topbar) - 56px);
-  scroll-snap-align: start;
+  max-height: min(400px, calc(100vh - var(--topbar) - 80px));
   touch-action: pan-y;
 }
 
