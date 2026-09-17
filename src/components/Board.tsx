@@ -29,7 +29,6 @@ import {
   COLORS,
   GRID_CELL_H,
   GRID_CELL_W,
-  cellKey,
   findNextCell,
   type ColorKey,
   type TodoItem,
@@ -267,11 +266,6 @@ export default function Board({
     )
   }
 
-  const occupied = useMemo(
-    () => new Set(lists.map((l) => cellKey(l.col, l.row))),
-    [lists],
-  )
-
   return (
     <div className="board-area">
       <DndContext
@@ -332,11 +326,6 @@ export default function Board({
             />
           </div>
         </div>
-
-        {/* silence unused in render trees that reference occupied during hint */}
-        <span className="sr-only" aria-hidden>
-          {occupied.size}
-        </span>
 
         <DragOverlay dropAnimation={null} style={{ zIndex: 1000 }}>
           {active?.type === 'list' ? (
