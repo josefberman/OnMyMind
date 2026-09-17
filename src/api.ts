@@ -16,6 +16,7 @@ import {
   findNextCell,
   nextColor,
   cellKey,
+  GRID_WRAP_COLS,
   type ColorKey,
   type TodoItem,
   type TodoList,
@@ -45,22 +46,39 @@ function mapList(id: string, data: Record<string, unknown>): TodoList {
   }
 }
 
-/** Ensure every list has a unique col/row (deployed site may only update `order`). */
+/** Ensure every list has a unique col/row; pull lists up into empty cells above. */
 function normalizeLayout(lists: TodoList[]): TodoList[] {
-  const sorted = [...lists].sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+  const sorted = [...lists].sort(
+    (a, b) => a.order - b.order || a.createdAt - b.createdAt,
+  )
   const occupied = new Set<string>()
+  const wrapCols = Math.max(
+    GRID_WRAP_COLS,
+    ...sorted.map((l) => Math.floor(l.col) + 1),
+    1,
+  )
+
   return sorted.map((list) => {
-    let { col, row } = list
+    let col = Math.max(0, Math.floor(Number(list.col) || 0))
+    let row = Math.max(0, Math.floor(Number(list.row) || 0))
+
+    // Gravity: settle to the highest free cell in this column
+    while (row > 0 && !occupied.has(cellKey(col, row - 1))) {
+      row -= 1
+    }
+
     if (occupied.has(cellKey(col, row))) {
       const next = findNextCell(
         [...occupied].map((key) => {
           const [c, r] = key.split(',').map(Number)
           return { col: c, row: r }
         }),
+        wrapCols,
       )
       col = next.col
       row = next.row
     }
+
     occupied.add(cellKey(col, row))
     return col === list.col && row === list.row ? list : { ...list, col, row }
   })

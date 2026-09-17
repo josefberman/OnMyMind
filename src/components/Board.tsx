@@ -29,6 +29,9 @@ import {
   COLORS,
   GRID_CELL_H,
   GRID_CELL_W,
+  GRID_PAD_X,
+  GRID_PAD_Y,
+  cellPosition,
   findNextCell,
   type ColorKey,
   type TodoItem,
@@ -104,23 +107,23 @@ export default function Board({
     itemOrderOverride?.[listId] ?? itemsByList[listId] ?? []
 
   const layoutExtent = useMemo(() => {
-    const positions = [...lists]
-    if (active?.type === 'list' && snapHint) {
-      positions.push({
-        id: '__hint',
-        col: snapHint.col,
-        row: snapHint.row,
-      } as TodoList)
+    const cols = lists.map((l) => l.col)
+    const rows = lists.map((l) => l.row)
+    if (snapHint) {
+      cols.push(snapHint.col)
+      rows.push(snapHint.row)
     }
     const ghostCell = findNextCell(lists)
-    const maxCol = Math.max(2, ...positions.map((l) => l.col), ghostCell.col) + 1
-    const maxRow = Math.max(1, ...positions.map((l) => l.row), ghostCell.row) + 1
+    cols.push(ghostCell.col)
+    rows.push(ghostCell.row)
+    const maxCol = Math.max(2, ...cols) + 1
+    const maxRow = Math.max(1, ...rows) + 1
     return {
-      width: maxCol * GRID_CELL_W + 40,
-      height: maxRow * GRID_CELL_H + 40,
+      width: GRID_PAD_X * 2 + maxCol * GRID_CELL_W,
+      height: GRID_PAD_Y * 2 + maxRow * GRID_CELL_H,
       ghostCell,
     }
-  }, [lists, active, snapHint])
+  }, [lists, snapHint])
 
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id)
@@ -287,10 +290,7 @@ export default function Board({
           {active?.type === 'list' && snapHint && (
             <div
               className="grid-snap-hint"
-              style={{
-                left: snapHint.col * GRID_CELL_W,
-                top: snapHint.row * GRID_CELL_H,
-              }}
+              style={cellPosition(snapHint.col, snapHint.row)}
               aria-hidden
             />
           )}
@@ -312,10 +312,10 @@ export default function Board({
 
           <div
             className="ghost-slot"
-            style={{
-              left: layoutExtent.ghostCell.col * GRID_CELL_W,
-              top: layoutExtent.ghostCell.row * GRID_CELL_H,
-            }}
+            style={cellPosition(
+              layoutExtent.ghostCell.col,
+              layoutExtent.ghostCell.row,
+            )}
           >
             <NewListGhost
               lists={lists}
@@ -396,10 +396,11 @@ function DraggableListColumn({
       data: { type: 'list' as const, listId: list.id },
     })
 
+  const pos = cellPosition(list.col, list.row)
   const style: React.CSSProperties = {
     position: 'absolute',
-    left: list.col * GRID_CELL_W,
-    top: list.row * GRID_CELL_H,
+    left: pos.left,
+    top: pos.top,
     width: 'var(--col-width)',
     transform: CSS.Translate.toString(transform),
     zIndex: isDragging || isDragSource ? 5 : 1,

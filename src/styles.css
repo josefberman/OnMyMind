@@ -323,17 +323,22 @@ button {
   flex: 0 0 auto;
   overflow: visible;
   scroll-snap-type: none;
+  padding: 24px 20px 32px;
+  --grid-gap: 20px;
+  --grid-row-h: 400px;
+  --grid-cell-w: calc(var(--col-width) + var(--grid-gap));
+  --grid-cell-h: calc(var(--grid-row-h) + var(--grid-gap));
   background-image:
-    linear-gradient(to right, rgba(31, 41, 80, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(31, 41, 80, 0.04) 1px, transparent 1px);
-  background-size: 340px 440px;
+    linear-gradient(to right, rgba(31, 41, 80, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(31, 41, 80, 0.06) 1px, transparent 1px);
+  background-size: var(--grid-cell-w) var(--grid-cell-h);
   background-position: 20px 24px;
 }
 
 .board.board-grid.is-dragging-list {
   background-image:
-    linear-gradient(to right, rgba(59, 130, 246, 0.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(59, 130, 246, 0.12) 1px, transparent 1px);
+    linear-gradient(to right, rgba(59, 130, 246, 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(59, 130, 246, 0.14) 1px, transparent 1px);
 }
 
 .list-slot,
@@ -341,23 +346,25 @@ button {
   position: absolute;
   width: var(--col-width);
   padding: 0;
+  margin: 0;
 }
 
 .ghost-slot .ghost-column {
   width: 100%;
   min-height: 200px;
-  max-height: 400px;
+  max-height: var(--grid-row-h);
 }
 
 .grid-snap-hint {
   position: absolute;
   width: var(--col-width);
-  height: 400px;
+  height: var(--grid-row-h);
   border-radius: var(--radius);
   border: 2px dashed #93c5fd;
   background: rgba(59, 130, 246, 0.08);
   pointer-events: none;
   z-index: 0;
+  box-sizing: border-box;
 }
 
 .board.is-dragging {
@@ -401,7 +408,7 @@ button {
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  max-height: min(400px, calc(100vh - var(--topbar) - 80px));
+  max-height: min(var(--grid-row-h, 400px), calc(100vh - var(--topbar) - 80px));
   touch-action: pan-y;
 }
 
